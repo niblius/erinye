@@ -34,14 +34,14 @@ trait ErinyeArbitraries {
       userName <- userNameGen
       email <- arbitrary[String]
       password <- arbitrary[String]
-    } yield User(userName, email, password)
+    } yield User(userName, email, Some(password))
   }
 
   implicit val userSignup = Arbitrary[SignupRequest] {
     for {
       userName <- userNameGen
       email <- arbitrary[String]
-      password <- arbitrary[String]
+      password <- userNameGen // TODO: back arbitrary[String]
     } yield SignupRequest(userName, email, password)
   }
 }
