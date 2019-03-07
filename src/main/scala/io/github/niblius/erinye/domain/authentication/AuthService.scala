@@ -5,6 +5,7 @@ import cats.data._
 import cats.effect.Sync
 import io.github.niblius.erinye.domain.UserAuthenticationFailedError
 import io.github.niblius.erinye.domain.users.{User, UserService}
+import io.github.niblius.erinye.infrastructure.endpoint.user.LoginRequest
 import tsec.authentication._
 import tsec.common.{SecureRandomId, Verified}
 import tsec.jws.mac.JWTMac
@@ -35,13 +36,11 @@ class AuthService[F[_]: Sync](
     SecuredRequestHandler(
       JWTAuthenticator.backed.inBearerToken(28.days, None, jwtStore, userBackingStore, signingKey))
 
-  def login(loginRequest: LoginRequest): EitherT[F, UserAuthenticationFailedError, TokenResponse] =
+  def login(name: String, password: String): EitherT[F, UserAuthenticationFailedError, Token] =
     for {
-      credentials <- EitherT.rightT[F, UserAuthenticationFailedError](loginRequest)
-      name = credentials.userName
       user <- userService.getUserByName(name).leftMap(_ => UserAuthenticationFailedError(name))
       checkResult <- EitherT.liftF(
-        cryptService.checkpw(credentials.password, PasswordHash[BCrypt](user.hash.get)))
+        cryptService.checkpw(password, PasswordHash[BCrypt](user.hash.get)))
       augJWT <- if (checkResult == Verified)
         EitherT.liftF[F, UserAuthenticationFailedError, AJWT](
           Auth.authenticator.create(user.id.get))
@@ -49,7 +48,7 @@ class AuthService[F[_]: Sync](
         EitherT.leftT[F, AJWT](UserAuthenticationFailedError(name))
       token = JWTMac.toEncodedString[F, HMACSHA256](augJWT.jwt)
       expiry = augJWT.expiry
-    } yield TokenResponse(token, expiry)
+    } yield Token(token, expiry)
 }
 
 object AuthService {

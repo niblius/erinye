@@ -7,3 +7,4 @@ case object ArticleNotFoundError extends ValidationError
 case object UserNotFoundError extends ValidationError
 case class UserAlreadyExistsError(user: User) extends ValidationError
 case class UserAuthenticationFailedError(userName: String) extends ValidationError
+case object ForbiddenError extends ValidationError

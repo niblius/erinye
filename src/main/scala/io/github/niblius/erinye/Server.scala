@@ -8,18 +8,19 @@ import io.github.niblius.erinye.infrastructure.doobie.{
   DoobieArticleRepositoryInterpreter,
   DoobieUserRepositoryInterpreter
 }
-import io.github.niblius.erinye.infrastructure.endpoint.{ArticleEndpoints, UserEndpoints}
+import io.github.niblius.erinye.infrastructure.endpoint.ArticleEndpoints
 import cats.effect._
 import cats.implicits._
 import io.github.niblius.erinye.domain.authentication.AuthService
 import io.github.niblius.erinye.domain.users.{UserService, UserValidationInterpreter}
 import io.github.niblius.erinye.infrastructure.TokenRepositoryInterpreter
+import io.github.niblius.erinye.infrastructure.endpoint.user.UserEndpoints
 import org.http4s.server.{Router, Server => H4Server}
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.implicits._
 import tsec.authentication.AugmentedJWT
 import tsec.common.SecureRandomId
-import tsec.mac.jca.{HMACSHA256}
+import tsec.mac.jca.HMACSHA256
 import tsec.passwordhashers.jca.BCrypt
 
 import scala.concurrent.ExecutionContext.Implicits.global

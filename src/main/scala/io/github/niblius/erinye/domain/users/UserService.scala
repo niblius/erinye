@@ -5,7 +5,9 @@ import cats.data._
 import cats.syntax.functor._
 import io.github.niblius.erinye.domain.{UserAlreadyExistsError, UserNotFoundError}
 
-class UserService[F[_]: Monad](userRepo: UserRepositoryAlgebra[F], validation: UserValidationAlgebra[F]) {
+class UserService[F[_]: Monad](
+    userRepo: UserRepositoryAlgebra[F],
+    validation: UserValidationAlgebra[F]) {
 
   def createUser(user: User): EitherT[F, UserAlreadyExistsError, User] =
     for {
@@ -32,6 +34,8 @@ class UserService[F[_]: Monad](userRepo: UserRepositoryAlgebra[F], validation: U
 }
 
 object UserService {
-  def apply[F[_]: Monad](repository: UserRepositoryAlgebra[F], validation: UserValidationAlgebra[F]): UserService[F] =
+  def apply[F[_]: Monad](
+      repository: UserRepositoryAlgebra[F],
+      validation: UserValidationAlgebra[F]): UserService[F] =
     new UserService[F](repository, validation)
 }
