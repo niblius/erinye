@@ -1,28 +1,37 @@
 package io.github.niblius.erinye.domain.articles
 
 import cats._
-import cats.data.EitherT
+import cats.data._
+import cats.effect.Sync
 import cats.implicits._
-import io.github.niblius.erinye.domain.ArticleNotFoundError
 
-class ArticleValidationInterpreter[F[_]: Monad](repository: ArticleRepositoryAlgebra[F])
-  extends ArticleValidationAlgebra[F] {
+class ArticleValidationInterpreter[F[_]: Sync](repository: ArticleRepositoryAlgebra[F])
+    extends ArticleValidationAlgebra[F] {
 
-  def exists(articleId: Option[Long]): EitherT[F, ArticleNotFoundError.type, Unit] =
-    EitherT {
-      articleId match {
-        case Some(id) =>
-          repository.get(id).map {
-            case Some(_) => Right(())
-            case _ => Left(ArticleNotFoundError)
-          }
-        case _ =>
-          Either.left[ArticleNotFoundError.type, Unit](ArticleNotFoundError).pure[F]
-      }
-    }
+  def exists(articleId: Long): EitherT[F, ArticleValidationError, Article] =
+    EitherT(repository.get(articleId).map(_.toRight(ArticleNotFoundError)))
+
+  def validateTitle(title: String): EitherT[F, ArticleValidationError, Unit] =
+    EitherT.cond[F](!title.isBlank, (), BadArticleTitleError)
+
+  def validateDesc(description: String): EitherT[F, ArticleValidationError, Unit] =
+    EitherT.cond[F](!description.isBlank, (), BadArticleDescriptionError)
+
+  def validateContent(content: String): EitherT[F, ArticleValidationError, Unit] =
+    EitherT.cond[F](!content.isBlank, (), BadContentError)
+
+  def validateTags(tags: Set[String]): EitherT[F, ArticleValidationError, Unit] =
+    EitherT.cond[F](!tags.exists((s: String) => s.isBlank), (), BadTagsError)
+
+  def validate(article: Article): F[ValidatedNel[ArticleValidationError, Unit]] =
+    (
+      validateTitle(article.title).toValidatedNel,
+      validateDesc(article.description).toValidatedNel,
+      validateContent(article.content).toValidatedNel,
+      validateTags(article.tags).toValidatedNel).mapN((_, _, _, _) => ().validNel)
 }
 
 object ArticleValidationInterpreter {
-  def apply[F[_]: Monad](repository: ArticleRepositoryAlgebra[F]) =
+  def apply[F[_]: Sync](repository: ArticleRepositoryAlgebra[F]) =
     new ArticleValidationInterpreter[F](repository)
 }

@@ -6,9 +6,16 @@ import cats.effect.Effect
 import cats.implicits._
 import io.circe.generic.auto._
 import io.circe.syntax._
-import io.github.niblius.erinye.domain.ArticleNotFoundError
-import io.github.niblius.erinye.domain.articles.{Article, ArticleService}
-import io.github.niblius.erinye.infrastructure.endpoint.Pagination.{OptionalOffsetMatcher, OptionalPageSizeMatcher}
+import io.github.niblius.erinye.domain.articles.{Article, ArticleNotFoundError, ArticleService}
+import io.github.niblius.erinye.domain.notifications.{
+  ArticleDeleted,
+  ArticleUpdated,
+  NotificationService
+}
+import io.github.niblius.erinye.infrastructure.endpoint.Pagination.{
+  OptionalOffsetMatcher,
+  OptionalPageSizeMatcher
+}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes}
@@ -24,20 +31,24 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
   private def createArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
-      case req @ POST -> Root / "articles" => for {
+      case req @ POST -> Root / "articles" =>
+        for {
           article <- req.as[Article]
           saved <- articleService.create(article)
           resp <- Ok(saved.asJson)
         } yield resp
     }
 
-  private def updateArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
+  private def updateArticleEndpoint(
+      articleService: ArticleService[F],
+      notificationService: NotificationService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case req @ PUT -> Root / "articles" / LongVar(articleId) =>
         val action = for {
           article <- req.as[Article]
           updated = article.copy(id = Some(articleId))
           result <- articleService.update(article).value
+          _ <- notificationService.publish(ArticleUpdated(updated))
         } yield result
 
         action.flatMap {
@@ -55,18 +66,27 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
         }
     }
 
-  private def deleteArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
+  private def deleteArticleEndpoint(
+      articleService: ArticleService[F],
+      notificationService: NotificationService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case DELETE -> Root / "articles" / LongVar(id) =>
-        for {
-          _ <- articleService.delete(id)
-          resp <- Ok()
-        } yield resp
+        val action = for {
+          deleted <- articleService.delete(id)
+          _ <- EitherT.liftF[F, ArticleNotFoundError.type, Unit](
+            notificationService.publish(ArticleDeleted(deleted)))
+        } yield ()
+
+        action.value.flatMap {
+          case Right(_) => Ok()
+          case Left(ArticleNotFoundError) => NotFound("The article was not found")
+        }
     }
 
   private def listArticlesEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
-      case GET -> Root / "articles" :? OptionalPageSizeMatcher(pageSize) :? OptionalOffsetMatcher(offset) =>
+      case GET -> Root / "articles" :? OptionalPageSizeMatcher(pageSize) :? OptionalOffsetMatcher(
+            offset) =>
         for {
           retrieved <- articleService.list(pageSize.getOrElse(10), offset.getOrElse(0))
           resp <- Ok(retrieved.asJson)
@@ -75,11 +95,11 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
   private def searchArticlesByTitle(articleService: ArticleService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
-      case req @ GET -> Root / "articles" / "searchByTitle" / title =>
+      case GET -> Root / "articles" / "searchByTitle" / title =>
         if (title.isBlank) for {
-            retrieved <- articleService.searchByTitle(title)
-            resp <- Ok(retrieved.asJson)
-          } yield resp
+          retrieved <- articleService.searchByTitle(title)
+          resp <- Ok(retrieved.asJson)
+        } yield resp
         else
           Ok(List[Article]().asJson)
     }
@@ -97,17 +117,21 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
     }
 
-  def endpoints(articleService: ArticleService[F]): HttpRoutes[F] =
+  def endpoints(
+      articleService: ArticleService[F],
+      notificationService: NotificationService[F]): HttpRoutes[F] =
     createArticleEndpoint(articleService) <+>
       getArticleEndpoint(articleService) <+>
-      deleteArticleEndpoint(articleService) <+>
+      deleteArticleEndpoint(articleService, notificationService) <+>
       listArticlesEndpoint(articleService) <+>
       searchArticlesByTitle(articleService) <+>
-      updateArticleEndpoint(articleService) <+>
+      updateArticleEndpoint(articleService, notificationService) <+>
       findArticlesByTagEndpoint(articleService)
 }
 
 object ArticleEndpoints {
-  def endpoints[F[_]: Effect](articleService: ArticleService[F]): HttpRoutes[F] =
-    new ArticleEndpoints[F].endpoints(articleService)
+  def endpoints[F[_]: Effect](
+      articleService: ArticleService[F],
+      notificationService: NotificationService[F]): HttpRoutes[F] =
+    new ArticleEndpoints[F].endpoints(articleService, notificationService)
 }

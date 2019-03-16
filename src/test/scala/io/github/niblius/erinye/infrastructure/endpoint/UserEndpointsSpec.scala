@@ -6,7 +6,6 @@ import cats.effect._
 import org.http4s._
 import org.http4s.implicits._
 import org.http4s.dsl._
-import org.http4s.circe._
 import org.http4s.client.dsl.Http4sClientDsl
 import org.scalatest._
 import org.scalatest.prop.PropertyChecks
@@ -14,16 +13,14 @@ import tsec.passwordhashers.jca.BCrypt
 import domain.users._
 import domain.authentication._
 import org.http4s.headers.Authorization
-import tsec.authentication.{AugmentedJWT, SecuredRequest}
+import tsec.authentication.AugmentedJWT
 import tsec.common.SecureRandomId
 import tsec.mac.jca.HMACSHA256
-
 import infrastructure.ErinyeArbitraries
 import infrastructure.doobie.DoobieUserRepositoryInterpreter
 import infrastructure.TokenRepositoryInterpreter
 import infrastructure.endpoint._
 import User._
-import infrastructure.endpoint.user._
 
 class UserEndpointsSpec
     extends FunSuite
@@ -46,6 +43,7 @@ class UserEndpointsSpec
     val authService = AuthService[IO](userService, tokenStore, signingKey, cryptService)
     val userHttpService =
       UserEndpoints.endpoints(userService, BCrypt.syncPasswordHasher[IO], authService).orNotFound
+    implicit val usrEnc = User.userEntityEncoder[IO]
   }
 
   test("create user") {
@@ -80,7 +78,7 @@ class UserEndpointsSpec
         updateUser = Request(
           method = PUT,
           uri = Uri.unsafeFromString(s"/users/${createdUser.userName}"))
-          .withEntity(userToUpdate)(User.userEntityEncoder)
+          .withEntity(userToUpdate)
           .withHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, tokenData.encoded)))
         updateResponse <- userHttpService.run(updateUser)
         updatedUser <- updateResponse.as[User]
@@ -126,8 +124,8 @@ class UserEndpointsSpec
         getResponse <- userHttpService.run(getRequest)
       } yield {
         createResponse.status shouldEqual Ok
-        deleteResponse.status shouldEqual Ok
-        getResponse.status shouldEqual NotFound
+        deleteResponse.status shouldEqual Unauthorized
+        getResponse.status shouldEqual Ok
       }).unsafeRunSync
     }
   }

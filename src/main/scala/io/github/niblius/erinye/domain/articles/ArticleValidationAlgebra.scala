@@ -1,8 +1,12 @@
 package io.github.niblius.erinye.domain.articles
 
-import cats.data.EitherT
-import io.github.niblius.erinye.domain.ArticleNotFoundError
+import cats.data._
 
 trait ArticleValidationAlgebra[F[_]] {
-  def exists(articleId: Option[Long]): EitherT[F, ArticleNotFoundError.type, Unit]
+  def exists(articleId: Long): EitherT[F, ArticleValidationError, Article]
+  def validateTitle(title: String): EitherT[F, ArticleValidationError, Unit]
+  def validateDesc(description: String): EitherT[F, ArticleValidationError, Unit]
+  def validateContent(content: String): EitherT[F, ArticleValidationError, Unit]
+  def validateTags(tags: Set[String]): EitherT[F, ArticleValidationError, Unit]
+  def validate(article: Article): F[ValidatedNel[ArticleValidationError, Unit]]
 }

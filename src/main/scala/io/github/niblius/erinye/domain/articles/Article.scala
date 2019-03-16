@@ -8,5 +8,6 @@ case class Article(
     content: String,
     tags: Set[String],
     dateCreated: Instant,
+    dateEdited: Instant,
     id: Option[Long] = None
 )

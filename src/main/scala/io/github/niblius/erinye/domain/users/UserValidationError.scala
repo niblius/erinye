@@ -1,0 +1,10 @@
+package io.github.niblius.erinye.domain.users
+
+sealed trait UserValidationError extends Product with Serializable
+
+case object UserNotFoundError extends UserValidationError
+case object UserAlreadyExistsError extends UserValidationError
+case object UserAuthenticationFailedError extends UserValidationError
+case object UserForbiddenError extends UserValidationError
+case object InvalidUserNameError extends UserValidationError
+case object InvalidEmailError extends UserValidationError

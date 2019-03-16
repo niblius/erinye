@@ -2,16 +2,16 @@ package io.github.niblius.erinye.domain.users
 
 import cats._
 import cats.data._
-import cats.syntax.functor._
-import io.github.niblius.erinye.domain.{UserAlreadyExistsError, UserNotFoundError}
+import cats.implicits._
 
 class UserService[F[_]: Monad](
     userRepo: UserRepositoryAlgebra[F],
     validation: UserValidationAlgebra[F]) {
 
-  def createUser(user: User): EitherT[F, UserAlreadyExistsError, User] =
+  def createUser(user: User): EitherT[F, UserValidationError, User] =
     for {
       _ <- validation.doesNotExist(user)
+      _ <- validation.validateUser(user)
       saved <- EitherT.liftF(userRepo.create(user))
     } yield saved
 
@@ -26,10 +26,12 @@ class UserService[F[_]: Monad](
   def deleteByUserName(userName: String): F[Unit] =
     userRepo.deleteByUserName(userName).as(())
 
-  def update(user: User): EitherT[F, UserNotFoundError.type, User] =
+  def update(user: User): EitherT[F, UserValidationError, User] =
     for {
       _ <- validation.exists(user.id)
-      saved <- EitherT.fromOptionF(userRepo.update(user), UserNotFoundError)
+      _ <- validation.validateUser(user)
+      saved <- EitherT
+        .fromOptionF(userRepo.update(user), UserNotFoundError: UserValidationError)
     } yield saved
 }
 

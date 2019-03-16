@@ -8,8 +8,8 @@ sealed case class Role(roleRepr: String)
 
 object Role extends SimpleAuthEnum[Role, String] {
 
-  val Administrator: Role = Role("Administrator")
-  val PlainUser: Role = Role("PlainUser")
+  val Administrator: Role = new Role("Administrator")
+  val PlainUser: Role = new Role("PlainUser")
 
   implicit val E: Eq[Role] = Eq.fromUniversalEquals[Role]
 

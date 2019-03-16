@@ -1,0 +1,9 @@
+package io.github.niblius.erinye.domain.articles
+
+sealed trait ArticleValidationError extends Product with Serializable
+
+case object ArticleNotFoundError extends ArticleValidationError
+case object BadArticleTitleError extends ArticleValidationError
+case object BadArticleDescriptionError extends ArticleValidationError
+case object BadContentError extends ArticleValidationError
+case object BadTagsError extends ArticleValidationError
