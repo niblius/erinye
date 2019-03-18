@@ -8,5 +8,6 @@ trait ArticleValidationAlgebra[F[_]] {
   def validateDesc(description: String): EitherT[F, ArticleValidationError, Unit]
   def validateContent(content: String): EitherT[F, ArticleValidationError, Unit]
   def validateTags(tags: Set[String]): EitherT[F, ArticleValidationError, Unit]
+  def validateAuthor(userId: Long): EitherT[F, ArticleValidationError, Unit]
   def validate(article: Article): F[ValidatedNel[ArticleValidationError, Unit]]
 }

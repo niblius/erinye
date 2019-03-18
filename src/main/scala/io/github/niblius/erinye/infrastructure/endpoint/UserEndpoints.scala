@@ -1,7 +1,7 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
 import cats.data.EitherT
-import cats.effect.{Effect, Sync}
+import cats.effect.Effect
 import cats.implicits._
 import io.circe.generic.auto._
 import io.circe.syntax._
@@ -16,7 +16,6 @@ import tsec.passwordhashers.{PasswordHash, PasswordHasher}
 import tsec.passwordhashers.jca.BCrypt
 import io.github.niblius.erinye.domain.authentication._
 import io.github.niblius.erinye.domain.users._
-import io.github.niblius.erinye.infrastructure.endpoint.ResponseBuilder
 
 import scala.language.higherKinds
 
@@ -66,7 +65,7 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
             .leftWiden[UserValidationError]
         } yield resp
 
-        buildResponse(action.value)(token => Ok(token.asJson))
+        build(action.value)(token => Ok(token.asJson))
     }
 
   private def signupEndpoint(
@@ -75,13 +74,14 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
     HttpRoutes.of[F] {
       case req @ POST -> Root / "users" =>
         val action = for {
+          // TODO: validate password here
           signup <- req.as[SignupRequest]
           hash <- cryptService.hashpw(signup.password)
           user <- signup.asUser(hash).pure[F]
           result <- userService.createUser(user).value
         } yield result
 
-        buildResponse(action)(saved => Ok(saved.asJson))
+        build(action)(saved => Ok(saved.asJson))
     }
 
   private def getModifiedUser(
@@ -126,7 +126,7 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
           result <- userService.update(updated)
         } yield result
 
-        buildResponse(action.value)(saved => Ok(saved.asJson))
+        build(action.value)(saved => Ok(saved.asJson))
     }
 
   private def searchByNameEndpoint(userService: UserService[F]): HttpRoutes[F] =
@@ -165,7 +165,7 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       signupEndpoint(userService, cryptService) <+>
       searchByNameEndpoint(userService) <+>
       getUserEndpoint(userService) <+>
-      authService.Auth.liftService(
+      authService.Auth.liftWithFallthrough(
         updateEndpoint(userService, cryptService) <+>
           deleteUserEndpoint(userService)
       )

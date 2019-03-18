@@ -40,8 +40,8 @@ object Server extends IOApp {
       articleRepo = DoobieArticleRepositoryInterpreter[F](xa)
       userRepo = DoobieUserRepositoryInterpreter[F](xa)
       commentRepo = DoobieCommentRepositoryInterpreter[F](xa)
-      articleValidation = ArticleValidationInterpreter[F](articleRepo)
       userValidation = UserValidationInterpreter[F](userRepo)
+      articleValidation = ArticleValidationInterpreter[F](articleRepo, userValidation)
       articleService = ArticleService[F](articleRepo, articleValidation)
       userService = UserService[F](userRepo, userValidation)
       commentService = CommentService[F](commentRepo)
@@ -52,7 +52,7 @@ object Server extends IOApp {
       authService = AuthService[F](userService, tokenStore, signingKey, cryptService)
       notificationService = NotificationService[F](articleValidation)
       services = WSEndpoints.endpoints[F](notificationService) <+>
-        ArticleEndpoints.endpoints[F](articleService, notificationService) <+>
+        ArticleEndpoints.endpoints[F](articleService, notificationService, authService) <+>
         UserEndpoints.endpoints[F](userService, cryptService, authService) <+>
         CommentEndpoints.endpoints[F](commentService, notificationService)
       httpApp = Router("/" -> services).orNotFound

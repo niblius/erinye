@@ -1,24 +1,30 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
+import java.time.Instant
+
 import cats.data.Validated.Valid
 import cats.data._
-import cats.effect.Effect
+import cats.effect.{Effect, Sync}
 import cats.implicits._
 import io.circe.generic.auto._
 import io.circe.syntax._
-import io.github.niblius.erinye.domain.articles.{Article, ArticleNotFoundError, ArticleService}
+import io.github.niblius.erinye.domain.articles._
+import io.github.niblius.erinye.domain.authentication._
 import io.github.niblius.erinye.domain.notifications.{
   ArticleDeleted,
   ArticleUpdated,
   NotificationService
 }
+import io.github.niblius.erinye.domain.users.User
 import io.github.niblius.erinye.infrastructure.endpoint.Pagination.{
   OptionalOffsetMatcher,
   OptionalPageSizeMatcher
 }
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{EntityDecoder, HttpRoutes}
+import org.http4s.HttpRoutes
+import tsec.authentication.{AugmentedJWT, TSecAuthService, asAuthed}
+import tsec.mac.jca.HMACSHA256
 
 import scala.language.higherKinds
 
@@ -27,60 +33,72 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
   /* Parses out tag query param, which could be multi-value */
   object TagMatcher extends OptionalMultiQueryParamDecoderMatcher[String]("tags")
 
-  implicit val articleDecoder: EntityDecoder[F, Article] = jsonOf[F, Article]
+  type ArticleValidationErrors = NonEmptyList[ArticleValidationError]
 
-  private def createArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
-    HttpRoutes.of[F] {
-      case req @ POST -> Root / "articles" =>
-        for {
-          article <- req.as[Article]
+  private val responseBuilder = ResponseBuilder[F, ArticleValidationError](
+    {
+      case ArticleNotFoundError => NotFound(_)
+      case BadArticleTitleError => BadRequest(_)
+      case BadArticleDescriptionError => BadRequest(_)
+      case BadArticleContentError => BadRequest(_)
+      case BadArticleTagsError => BadRequest(_)
+    },
+    errors => BadRequest(errors.asJson),
+    json => Ok(json)
+  )
+
+  private def createArticleEndpoint(
+      articleService: ArticleService[F]): TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AdminRequired) {
+      case secured @ POST -> Root / "articles" asAuthed user =>
+        val req = secured.request
+        val action: EitherT[F, ArticleValidationErrors, Article] = for {
+          articleIn <- EitherT.right(req.as[Article])
+          currentTime <- EitherT.right(Sync[F].delay(Instant.now()))
+          article = articleIn.copy(dateCreated = currentTime, userId = user.id.get)
           saved <- articleService.create(article)
-          resp <- Ok(saved.asJson)
-        } yield resp
+        } yield saved
+        responseBuilder.build(action.value)
     }
 
   private def updateArticleEndpoint(
       articleService: ArticleService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    HttpRoutes.of[F] {
-      case req @ PUT -> Root / "articles" / LongVar(articleId) =>
-        val action = for {
+      notificationService: NotificationService[F])
+    : TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AdminRequired) {
+      case secured @ PUT -> Root / "articles" / LongVar(articleId) asAuthed user =>
+        val req = secured.request
+        val action: F[Either[ArticleValidationErrors, Article]] = for {
           article <- req.as[Article]
-          updated = article.copy(id = Some(articleId))
+          updated = article.copy(
+            id = Some(articleId),
+            dateCreated = article.dateCreated,
+            userId = article.userId)
           result <- articleService.update(article).value
           _ <- notificationService.publish(ArticleUpdated(updated))
         } yield result
 
-        action.flatMap {
-          case Right(saved) => Ok(saved.asJson)
-          case Left(ArticleNotFoundError) => NotFound("The article was not found")
-        }
+        responseBuilder.build(action)
     }
 
   private def getArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case GET -> Root / "articles" / LongVar(id) =>
-        articleService.get(id).value.flatMap {
-          case Right(found) => Ok(found.asJson)
-          case Left(ArticleNotFoundError) => NotFound("The article was not found")
-        }
+        responseBuilder.build(articleService.get(id).leftWiden[ArticleValidationError].value)
     }
 
   private def deleteArticleEndpoint(
       articleService: ArticleService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    HttpRoutes.of[F] {
-      case DELETE -> Root / "articles" / LongVar(id) =>
+      notificationService: NotificationService[F])
+    : TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AdminRequired) {
+      case DELETE -> Root / "articles" / LongVar(id) asAuthed user =>
         val action = for {
-          deleted <- articleService.delete(id)
-          _ <- EitherT.liftF[F, ArticleNotFoundError.type, Unit](
-            notificationService.publish(ArticleDeleted(deleted)))
+          deleted <- articleService.delete(id).leftWiden[ArticleValidationError]
+          _ <- EitherT.right(notificationService.publish(ArticleDeleted(deleted)))
         } yield ()
 
-        action.value.flatMap {
-          case Right(_) => Ok()
-          case Left(ArticleNotFoundError) => NotFound("The article was not found")
-        }
+        responseBuilder.build(action.value)
     }
 
   private def listArticlesEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
@@ -119,19 +137,23 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
   def endpoints(
       articleService: ArticleService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    createArticleEndpoint(articleService) <+>
-      getArticleEndpoint(articleService) <+>
-      deleteArticleEndpoint(articleService, notificationService) <+>
+      notificationService: NotificationService[F],
+      authService: AuthService[F]): HttpRoutes[F] =
+    getArticleEndpoint(articleService) <+>
       listArticlesEndpoint(articleService) <+>
       searchArticlesByTitle(articleService) <+>
-      updateArticleEndpoint(articleService, notificationService) <+>
-      findArticlesByTagEndpoint(articleService)
+      findArticlesByTagEndpoint(articleService) <+>
+      authService.Auth.liftWithFallthrough(
+        createArticleEndpoint(articleService) <+>
+          deleteArticleEndpoint(articleService, notificationService) <+>
+          updateArticleEndpoint(articleService, notificationService)
+      )
 }
 
 object ArticleEndpoints {
   def endpoints[F[_]: Effect](
       articleService: ArticleService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    new ArticleEndpoints[F].endpoints(articleService, notificationService)
+      notificationService: NotificationService[F],
+      authService: AuthService[F]): HttpRoutes[F] =
+    new ArticleEndpoints[F].endpoints(articleService, notificationService, authService)
 }

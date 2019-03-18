@@ -7,25 +7,25 @@ sealed trait Notification {
 }
 
 final case class ArticleUpdated(articleUpdated: Article) extends Notification {
-  override def articleId: Long = articleUpdated.id.get
+  def articleId: Long = articleUpdated.id.get
 }
 
 final case class ArticleEdited(articleEdited: Article) extends Notification {
-  override def articleId: Long = articleEdited.id.get
+  def articleId: Long = articleEdited.id.get
 }
 
 final case class ArticleDeleted(articleDeleted: Article) extends Notification {
-  override def articleId: Long = articleDeleted.id.get
+  def articleId: Long = articleDeleted.id.get
 }
 
 final case class CommentCreated(commentCreated: Comment) extends Notification {
-  override def articleId: Long = commentCreated.articleId
+  def articleId: Long = commentCreated.articleId
 }
 
 final case class CommentEdited(commentEdited: Comment) extends Notification {
-  override def articleId: Long = commentEdited.articleId
+  def articleId: Long = commentEdited.articleId
 }
 
 final case class CommentDeleted(commentDeleted: Comment) extends Notification {
-  override def articleId: Long = commentDeleted.articleId
+  def articleId: Long = commentDeleted.articleId
 }

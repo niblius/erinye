@@ -8,11 +8,12 @@ class UserService[F[_]: Monad](
     userRepo: UserRepositoryAlgebra[F],
     validation: UserValidationAlgebra[F]) {
 
-  def createUser(user: User): EitherT[F, UserValidationError, User] =
+  def createUser(user: User): EitherT[F, NonEmptyList[UserValidationError], User] =
     for {
-      _ <- validation.doesNotExist(user)
-      _ <- validation.validateUser(user)
-      saved <- EitherT.liftF(userRepo.create(user))
+      // not flat map, but apply doesNotExists as validated into the chain
+      _ <- EitherT(validation.validate(user).map(_.toEither))
+      _ <- validation.doesNotExist(user).leftWiden[UserValidationError]
+      saved <- EitherT.right(userRepo.create(user))
     } yield saved
 
   def getUser(userId: Long): EitherT[F, UserNotFoundError.type, User] =
@@ -28,8 +29,8 @@ class UserService[F[_]: Monad](
 
   def update(user: User): EitherT[F, UserValidationError, User] =
     for {
-      _ <- validation.exists(user.id)
-      _ <- validation.validateUser(user)
+      _ <- validation.exists(user.id.get).leftWiden[UserValidationError]
+      _ <- EitherT(validation.validate(user).map(_.toEither))
       saved <- EitherT
         .fromOptionF(userRepo.update(user), UserNotFoundError: UserValidationError)
     } yield saved

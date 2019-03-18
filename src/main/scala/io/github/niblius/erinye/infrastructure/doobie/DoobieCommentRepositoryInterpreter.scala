@@ -73,27 +73,27 @@ class DoobieCommentRepositoryInterpreter[F[_]: Monad](val xa: Transactor[F])
     extends CommentRepositoryAlgebra[F] {
   import CommentSQL._
 
-  override def create(comment: Comment): F[Comment] =
+  def create(comment: Comment): F[Comment] =
     insert(comment)
       .withUniqueGeneratedKeys[Long]("ID")
       .map(id => comment.copy(id = id.some))
       .transact(xa)
 
-  override def update(comment: Comment): F[Option[Comment]] =
+  def update(comment: Comment): F[Option[Comment]] =
     OptionT
       .fromOption[ConnectionIO](comment.id)
       .semiflatMap(id => CommentSQL.update(comment, id).run.as(comment))
       .value
       .transact(xa)
 
-  override def get(id: Long): F[Option[Comment]] = select(id).option.transact(xa)
+  def get(id: Long): F[Option[Comment]] = select(id).option.transact(xa)
 
-  override def delete(id: Long): F[Option[Comment]] =
+  def delete(id: Long): F[Option[Comment]] =
     OptionT(get(id))
       .semiflatMap(comment => CommentSQL.delete(id).run.transact(xa).as(comment))
       .value
 
-  override def list(articleId: Long): F[List[Comment]] =
+  def list(articleId: Long): F[List[Comment]] =
     selectAll(articleId).to[List].transact(xa)
 }
 

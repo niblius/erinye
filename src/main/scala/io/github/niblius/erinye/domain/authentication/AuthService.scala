@@ -22,11 +22,11 @@ class AuthService[F[_]: Sync](
   // TODO: Use redis
   val userBackingStore: BackingStore[F, Long, User] = new BackingStore[F, Long, User] {
     // should never be called
-    override def put(user: User): F[User] = ???
-    override def update(user: User): F[User] = ???
-    override def delete(id: Long): F[Unit] = ???
+    def put(user: User): F[User] = ???
+    def update(user: User): F[User] = ???
+    def delete(id: Long): F[Unit] = ???
 
-    override def get(id: Long): OptionT[F, User] = userService.getUser(id).toOption
+    def get(id: Long): OptionT[F, User] = userService.getUser(id).toOption
   }
 
   type AJWT = AugmentedJWT[HMACSHA256, Long]
