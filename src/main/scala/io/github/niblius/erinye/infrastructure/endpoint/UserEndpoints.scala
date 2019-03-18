@@ -1,6 +1,6 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
-import cats.data.EitherT
+import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Effect
 import cats.implicits._
 import io.circe.generic.auto._
@@ -44,16 +44,17 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
   implicit val userUpdateRequestEnc: EntityEncoder[F, UserUpdateRequest] = jsonEncoderOf
   implicit val userUpdateRequestDec: EntityDecoder[F, UserUpdateRequest] = jsonOf
 
-  private val responseBuilder = ResponseBuilder[F, UserValidationError] {
-    case UserNotFoundError => NotFound("The user was not found")
-    case UserAlreadyExistsError =>
-      Conflict(s"The user already exists")
-    case UserAuthenticationFailedError => BadRequest(s"Authentication failed")
-    case UserForbiddenError => Forbidden("This action if forbidden for you")
-    case InvalidEmailError => BadRequest("Invalid user email")
-    case InvalidUserNameError => BadRequest("Invalid user name")
-  }
-  import responseBuilder._
+  private val responseBuilder = ResponseBuilder[F, UserValidationError](
+    {
+      case UserNotFoundError => NotFound(_)
+      case UserAlreadyExistsError =>
+        Conflict(_)
+      case UserForbiddenError => Forbidden(_)
+      case _ => BadRequest(_)
+    },
+    errors => BadRequest(errors.asJson),
+    json => Ok(json)
+  )
 
   private def loginEndpoint(authService: AuthService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
@@ -65,7 +66,7 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
             .leftWiden[UserValidationError]
         } yield resp
 
-        build(action.value)(token => Ok(token.asJson))
+        responseBuilder.build(action.value)
     }
 
   private def signupEndpoint(
@@ -74,14 +75,13 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
     HttpRoutes.of[F] {
       case req @ POST -> Root / "users" =>
         val action = for {
-          // TODO: validate password here
           signup <- req.as[SignupRequest]
           hash <- cryptService.hashpw(signup.password)
           user <- signup.asUser(hash).pure[F]
-          result <- userService.createUser(user).value
+          result <- userService.createUserCheckingPassword(user, signup.password).value
         } yield result
 
-        build(action)(saved => Ok(saved.asJson))
+        responseBuilder.buildList(action)
     }
 
   private def getModifiedUser(
@@ -119,32 +119,31 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
     TSecAuthService.withAuthorization(AuthenticatedRequired) {
       case secured @ PUT -> Root / "users" / name asAuthed user =>
         val req = secured.request
-        val action: EitherT[F, UserValidationError, User] = for {
+        val action: EitherT[F, NonEmptyList[UserValidationError], User] = for {
           updateReq <- EitherT.liftF(req.as[UserUpdateRequest])
-          origUser <- userService.getUserByName(name)
-          updated <- getModifiedUser(user, cryptService, origUser, updateReq)
-          result <- userService.update(updated)
+          origUser <- userService.getUserByName(name).leftMap(NonEmptyList.one)
+          updated <- getModifiedUser(user, cryptService, origUser, updateReq).leftMap(
+            NonEmptyList.one)
+          result <- updateReq.password match {
+            case Some(password) => userService.updateCheckingPassword(updated, password)
+            case None => userService.update(updated)
+          }
         } yield result
 
-        build(action.value)(saved => Ok(saved.asJson))
+        responseBuilder.buildList(action.value)
     }
 
   private def searchByNameEndpoint(userService: UserService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case GET -> Root / "users" / userName =>
-        userService.getUserByName(userName).value.flatMap {
-          case Right(found) => Ok(found.asJson)
-          case Left(UserNotFoundError) => NotFound("The user was not found")
-        }
+        responseBuilder.build(
+          userService.getUserByName(userName).leftWiden[UserValidationError].value)
     }
 
   private def getUserEndpoint(userService: UserService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case GET -> Root / "articles" / LongVar(id) =>
-        userService.getUser(id).value.flatMap {
-          case Right(found) => Ok(found.asJson)
-          case Left(UserNotFoundError) => NotFound("The article was not found")
-        }
+        responseBuilder.build(userService.getUser(id).leftWiden[UserValidationError].value)
     }
 
   private def deleteUserEndpoint(

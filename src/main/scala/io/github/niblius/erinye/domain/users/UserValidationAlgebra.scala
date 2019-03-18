@@ -6,7 +6,7 @@ import scala.language.higherKinds
 
 trait UserValidationAlgebra[F[_]] {
 
-  def doesNotExist(user: User): EitherT[F, UserValidationError, Unit]
+  def doesNotExist(user: User): EitherT[F, UserAlreadyExistsError.type, Unit]
 
   def exists(userId: Long): EitherT[F, UserNotFoundError.type, Unit]
 

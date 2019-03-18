@@ -36,7 +36,7 @@ class ArticleValidationInterpreter[F[_]: Sync](
       validateContent(article.content).toValidatedNel,
       validateTags(article.tags).toValidatedNel,
       validateAuthor(article.userId).toValidatedNel
-    ).mapN((_, _, _, _, _) => ().validNel)
+    ).mapN(_ |+| _ |+| _ |+| _ |+| _)
 }
 
 object ArticleValidationInterpreter {

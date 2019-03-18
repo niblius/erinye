@@ -38,10 +38,7 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
   private val responseBuilder = ResponseBuilder[F, ArticleValidationError](
     {
       case ArticleNotFoundError => NotFound(_)
-      case BadArticleTitleError => BadRequest(_)
-      case BadArticleDescriptionError => BadRequest(_)
-      case BadArticleContentError => BadRequest(_)
-      case BadArticleTagsError => BadRequest(_)
+      case _ => BadRequest(_)
     },
     errors => BadRequest(errors.asJson),
     json => Ok(json)
@@ -58,7 +55,7 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
           article = articleIn.copy(dateCreated = currentTime, userId = user.id.get)
           saved <- articleService.create(article)
         } yield saved
-        responseBuilder.build(action.value)
+        responseBuilder.buildList(action.value)
     }
 
   private def updateArticleEndpoint(
@@ -78,7 +75,7 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
           _ <- notificationService.publish(ArticleUpdated(updated))
         } yield result
 
-        responseBuilder.build(action)
+        responseBuilder.buildList(action)
     }
 
   private def getArticleEndpoint(articleService: ArticleService[F]): HttpRoutes[F] =
@@ -95,7 +92,8 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       case DELETE -> Root / "articles" / LongVar(id) asAuthed user =>
         val action = for {
           deleted <- articleService.delete(id).leftWiden[ArticleValidationError]
-          _ <- EitherT.right(notificationService.publish(ArticleDeleted(deleted)))
+          _ <- EitherT.liftF[F, ArticleValidationError, Unit](
+            notificationService.publish(ArticleDeleted(deleted)))
         } yield ()
 
         responseBuilder.build(action.value)

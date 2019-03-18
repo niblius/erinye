@@ -46,7 +46,7 @@ class UserValidationInterpreter[F[_]: Monad](userRepo: UserRepositoryAlgebra[F])
     (
       validateEmail(user.email).leftWiden[UserValidationError].toValidatedNel,
       validateName(user.userName).leftWiden[UserValidationError].toValidatedNel
-    ).mapN((_, _) => ().validNel)
+    ).mapN(_ |+| _)
 
 }
 

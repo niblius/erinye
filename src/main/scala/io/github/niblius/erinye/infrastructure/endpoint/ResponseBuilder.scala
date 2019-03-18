@@ -20,7 +20,7 @@ case class ResponseBuilder[F[_]: FlatMap, A <: ValidationError](
       case Right(b) => right(b.asJson)
     }
 
-  def build[B](result: F[Either[NonEmptyList[A], B]])(
+  def buildList[B](result: F[Either[NonEmptyList[A], B]])(
       implicit entityEncoder: Encoder[B]): F[Response[F]] =
     result.flatMap {
       case Left(as) => leftSequence(as.map(_.explanation))
@@ -33,7 +33,7 @@ case class ResponseBuilder[F[_]: FlatMap, A <: ValidationError](
       case Right(b) => customRight(b)
     }
 
-  def buildLeft[B](result: F[Either[NonEmptyList[A], B]])(
+  def buildLeftList[B](result: F[Either[NonEmptyList[A], B]])(
       customRight: B => F[Response[F]]): F[Response[F]] =
     result.flatMap {
       case Left(as) => leftSequence(as.map(_.explanation))
