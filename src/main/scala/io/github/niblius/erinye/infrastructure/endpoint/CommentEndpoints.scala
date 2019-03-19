@@ -1,54 +1,99 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
-import cats.data.Validated.Valid
+import java.time.Instant
+
 import cats.data._
 import cats.effect.Effect
 import cats.implicits._
 import io.circe.generic.auto._
 import io.circe.syntax._
+import io.github.niblius.erinye.domain.authentication.AuthenticatedRequired
 import io.github.niblius.erinye.domain.comments._
 import io.github.niblius.erinye.domain.notifications.{CommentDeleted, NotificationService}
+import io.github.niblius.erinye.domain.users.{Role, User}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{EntityDecoder, HttpRoutes}
+import org.http4s.HttpRoutes
+import tsec.authentication._
+import tsec.mac.jca.HMACSHA256
+import io.github.niblius.erinye.domain.authentication._
 
 import scala.language.higherKinds
 
 class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
-  /* Parses out tag query param, which could be multi-value */
-  object TagMatcher extends OptionalMultiQueryParamDecoderMatcher[String]("tags")
-
-  // TODO: remove this?
-  implicit val commentDecoder: EntityDecoder[F, Comment] = jsonOf[F, Comment]
+  private val responseBuilder = ResponseBuilder[F, CommentValidationError](
+    {
+      case CommentNotFoundError => NotFound(_)
+      case CommentArticleNotFound => NotFound(_)
+      case _ => BadRequest(_)
+    },
+    jsons => BadRequest(jsons),
+    json => Ok(json)
+  )
 
   private def createCommentEndpoint(
       commentService: CommentService[F],
+      notificationService: NotificationService[F])
+    : TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AuthenticatedRequired) {
+      case secured @ POST -> Root / "comments" asAuthed user =>
+        val req = secured.request
+        val action = for {
+          comment <- req.as[Comment]
+          saved <- commentService
+            .create(
+              comment.copy(
+                anonymName = None,
+                userId = user.id,
+                dateCreated = Instant.now(),
+                dateEdited = None))
+            .value
+        } yield saved
+        responseBuilder.buildList(action)
+    }
+
+  private def createAnonymousCommentEndpoint(
+      commentService: CommentService[F],
       notificationService: NotificationService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
-      case req @ POST -> Root / "comments" =>
-        for {
+      case req @ POST -> Root / "comments" / "anonymous" =>
+        val action = for {
           comment <- req.as[Comment]
-          saved <- commentService.create(comment)
-          resp <- Ok(saved.asJson)
-        } yield resp
+          saved <- commentService
+            .createAnonymous(
+              comment.copy(userId = None, dateCreated = Instant.now(), dateEdited = None))
+            .value
+        } yield saved
+        responseBuilder.buildList(action)
     }
 
   private def updateCommentEndpoint(
       commentService: CommentService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    HttpRoutes.of[F] {
-      case req @ PUT -> Root / "comments" / LongVar(commentId) =>
-        val action = for {
-          comment <- req.as[Comment]
-          updated = comment.copy(id = Some(commentId))
-          result <- commentService.update(comment).value
-        } yield result
+      notificationService: NotificationService[F])
+    : TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AuthenticatedRequired) {
+      case secured @ PUT -> Root / "comments" / LongVar(commentId) asAuthed user =>
+        val req = secured.request
+        val action: EitherT[F, NonEmptyList[CommentValidationError], Comment] = for {
+          comment <- EitherT.liftF(req.as[Comment])
+          orig <- commentService.get(commentId).leftMap(NonEmptyList.one)
+          updated <- {
+            if (orig.userId.get == user.id.get || user.role == Role.Administrator)
+              EitherT.rightT[F, NonEmptyList[CommentValidationError]](
+                comment.copy(
+                  id = orig.id,
+                  userId = orig.userId,
+                  articleId = orig.articleId,
+                  anonymName = None,
+                  dateCreated = orig.dateCreated,
+                  dateEdited = Some(Instant.now())))
+            else EitherT.leftT[F, Comment](NonEmptyList.one(CommentForbidden))
+          }
+          saved <- commentService.update(updated)
+        } yield saved
 
-        action.flatMap {
-          case Right(saved) => Ok(saved.asJson)
-          case Left(CommentNotFoundError) => NotFound("The comment was not found")
-        }
+        responseBuilder.buildList(action.value)
     }
 
   private def getCommentEndpoint(commentService: CommentService[F]): HttpRoutes[F] =
@@ -62,19 +107,22 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
   private def deleteCommentEndpoint(
       commentService: CommentService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    HttpRoutes.of[F] {
-      case DELETE -> Root / "comments" / LongVar(id) =>
-        val action = for {
-          deleted <- commentService.delete(id)
-          _ <- EitherT.liftF[F, CommentNotFoundError.type, Unit](
-            notificationService.publish(CommentDeleted(deleted)))
+      notificationService: NotificationService[F])
+    : TSecAuthService[User, AugmentedJWT[HMACSHA256, Long], F] =
+    TSecAuthService.withAuthorization(AuthenticatedRequired) {
+      case DELETE -> Root / "comments" / LongVar(id) asAuthed user =>
+        val action: EitherT[F, CommentValidationError, Unit] = for {
+          comment <- commentService.get(id)
+          deleted <- {
+            if (comment.userId.get == user.id.get || user.role == Role.Administrator)
+              commentService.delete(id)
+            else
+              EitherT.leftT[F, Comment](CommentForbidden)
+          }
+          _ <- EitherT.liftF(notificationService.publish(CommentDeleted(deleted)))
         } yield ()
 
-        action.value.flatMap {
-          case Right(_) => Ok()
-          case Left(CommentNotFoundError) => NotFound("The comment was not found")
-        }
+        responseBuilder.build(action.value)
     }
 
   private def listCommentsEndpoint(commentService: CommentService[F]): HttpRoutes[F] =
@@ -88,17 +136,22 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
 
   def endpoints(
       commentService: CommentService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    createCommentEndpoint(commentService, notificationService) <+>
+      notificationService: NotificationService[F],
+      authService: AuthService[F]): HttpRoutes[F] =
+    createAnonymousCommentEndpoint(commentService, notificationService) <+>
       getCommentEndpoint(commentService) <+>
-      deleteCommentEndpoint(commentService, notificationService) <+>
       listCommentsEndpoint(commentService) <+>
-      updateCommentEndpoint(commentService, notificationService)
+      authService.Auth.liftWithFallthrough(
+        updateCommentEndpoint(commentService, notificationService) <+>
+          deleteCommentEndpoint(commentService, notificationService) <+>
+          createCommentEndpoint(commentService, notificationService)
+      )
 }
 
 object CommentEndpoints {
   def endpoints[F[_]: Effect](
       commentService: CommentService[F],
-      notificationService: NotificationService[F]): HttpRoutes[F] =
-    new CommentEndpoints[F].endpoints(commentService, notificationService)
+      notificationService: NotificationService[F],
+      authService: AuthService[F]): HttpRoutes[F] =
+    new CommentEndpoints[F].endpoints(commentService, notificationService, authService)
 }

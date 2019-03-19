@@ -12,7 +12,7 @@ import org.http4s.Response
   */
 case class ResponseBuilder[F[_]: FlatMap, A <: ValidationError](
     left: A => String => F[Response[F]],
-    leftSequence: NonEmptyList[String] => F[Response[F]],
+    leftSequence: Json => F[Response[F]],
     right: Json => F[Response[F]]) {
   def build[B](result: F[Either[A, B]])(implicit entityEncoder: Encoder[B]): F[Response[F]] =
     result.flatMap {
@@ -23,7 +23,7 @@ case class ResponseBuilder[F[_]: FlatMap, A <: ValidationError](
   def buildList[B](result: F[Either[NonEmptyList[A], B]])(
       implicit entityEncoder: Encoder[B]): F[Response[F]] =
     result.flatMap {
-      case Left(as) => leftSequence(as.map(_.explanation))
+      case Left(as) => leftSequence(as.map(a => a.key -> a.explanation).asJson)
       case Right(b) => right(b.asJson)
     }
 
@@ -36,7 +36,7 @@ case class ResponseBuilder[F[_]: FlatMap, A <: ValidationError](
   def buildLeftList[B](result: F[Either[NonEmptyList[A], B]])(
       customRight: B => F[Response[F]]): F[Response[F]] =
     result.flatMap {
-      case Left(as) => leftSequence(as.map(_.explanation))
+      case Left(as) => leftSequence(as.map(a => a.key -> a.explanation).asJson)
       case Right(b) => customRight(b)
     }
 }

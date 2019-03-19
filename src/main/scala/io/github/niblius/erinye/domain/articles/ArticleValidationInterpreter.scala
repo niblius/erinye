@@ -1,6 +1,5 @@
 package io.github.niblius.erinye.domain.articles
 
-import cats._
 import cats.data._
 import cats.effect.Sync
 import cats.implicits._

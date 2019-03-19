@@ -17,7 +17,7 @@ import io.github.niblius.erinye.infrastructure.endpoint.{
 import cats.effect._
 import cats.implicits._
 import io.github.niblius.erinye.domain.authentication.AuthService
-import io.github.niblius.erinye.domain.comments.CommentService
+import io.github.niblius.erinye.domain.comments.{CommentService, CommentValidationInterpreter}
 import io.github.niblius.erinye.domain.notifications.NotificationService
 import io.github.niblius.erinye.domain.users.{UserService, UserValidationInterpreter}
 import io.github.niblius.erinye.infrastructure.TokenRepositoryInterpreter
@@ -42,9 +42,13 @@ object Server extends IOApp {
       commentRepo = DoobieCommentRepositoryInterpreter[F](xa)
       userValidation = UserValidationInterpreter[F](userRepo)
       articleValidation = ArticleValidationInterpreter[F](articleRepo, userValidation)
+      commentValidation = CommentValidationInterpreter[F](
+        commentRepo,
+        articleValidation,
+        userValidation)
       articleService = ArticleService[F](articleRepo, articleValidation)
       userService = UserService[F](userRepo, userValidation)
-      commentService = CommentService[F](commentRepo)
+      commentService = CommentService[F](commentRepo, commentValidation)
       cryptService = BCrypt.syncPasswordHasher[F]
       tokenStore = TokenRepositoryInterpreter[F, SecureRandomId, AugmentedJWT[HMACSHA256, Long]](
         s => SecureRandomId.coerce(s.id))
@@ -54,7 +58,7 @@ object Server extends IOApp {
       services = WSEndpoints.endpoints[F](notificationService) <+>
         ArticleEndpoints.endpoints[F](articleService, notificationService, authService) <+>
         UserEndpoints.endpoints[F](userService, cryptService, authService) <+>
-        CommentEndpoints.endpoints[F](commentService, notificationService)
+        CommentEndpoints.endpoints[F](commentService, notificationService, authService)
       httpApp = Router("/" -> services).orNotFound
       _ <- Resource.liftF(DatabaseConfig.initializeDb(conf.db))
       server <- BlazeServerBuilder[F]

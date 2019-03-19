@@ -40,7 +40,7 @@ class ArticleEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       case ArticleNotFoundError => NotFound(_)
       case _ => BadRequest(_)
     },
-    errors => BadRequest(errors.asJson),
+    jsons => BadRequest(jsons),
     json => Ok(json)
   )
 

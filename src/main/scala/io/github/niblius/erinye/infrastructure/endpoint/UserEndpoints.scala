@@ -4,7 +4,6 @@ import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Effect
 import cats.implicits._
 import io.circe.generic.auto._
-import io.circe.syntax._
 import org.http4s.{EntityDecoder, EntityEncoder}
 import org.http4s.circe.jsonOf
 import org.http4s.HttpRoutes
@@ -52,7 +51,7 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       case UserForbiddenError => Forbidden(_)
       case _ => BadRequest(_)
     },
-    errors => BadRequest(errors.asJson),
+    jsons => BadRequest(jsons),
     json => Ok(json)
   )
 

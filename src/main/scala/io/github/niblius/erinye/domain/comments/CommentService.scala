@@ -4,13 +4,32 @@ import cats._
 import cats.implicits._
 import cats.data._
 
-class CommentService[F[_]: Functor](repository: CommentRepositoryAlgebra[F]) {
+class CommentService[F[_]: Monad](
+    repository: CommentRepositoryAlgebra[F],
+    validation: CommentValidationAlgebra[F]) {
 
-  def create(comment: Comment): F[Comment] =
-    repository.create(comment)
+  private def createWithExternalValidation(
+      comment: Comment,
+      validate: F[ValidatedNel[CommentValidationError, Unit]])
+    : EitherT[F, NonEmptyList[CommentValidationError], Comment] =
+    for {
+      _ <- EitherT(validate.map(_.toEither))
+      saved <- EitherT.right(repository.create(comment))
+    } yield saved
 
-  def update(comment: Comment): EitherT[F, CommentNotFoundError.type, Comment] =
-    EitherT.fromOptionF(repository.update(comment), CommentNotFoundError)
+  def create(comment: Comment): EitherT[F, NonEmptyList[CommentValidationError], Comment] =
+    createWithExternalValidation(comment, validation.validateComment(comment))
+
+  def createAnonymous(comment: Comment): EitherT[F, NonEmptyList[CommentValidationError], Comment] =
+    createWithExternalValidation(comment, validation.validateAnonymousComment(comment))
+
+  def update(comment: Comment): EitherT[F, NonEmptyList[CommentValidationError], Comment] =
+    for {
+      _ <- EitherT(validation.validateComment(comment).map(_.toEither))
+      saved <- EitherT.fromOptionF[F, NonEmptyList[CommentValidationError], Comment](
+        repository.update(comment),
+        NonEmptyList.one(CommentNotFoundError))
+    } yield saved
 
   def get(id: Long): EitherT[F, CommentNotFoundError.type, Comment] =
     EitherT.fromOptionF(repository.get(id), CommentNotFoundError)
@@ -23,6 +42,8 @@ class CommentService[F[_]: Functor](repository: CommentRepositoryAlgebra[F]) {
 }
 
 object CommentService {
-  def apply[F[_]: Monad](repository: CommentRepositoryAlgebra[F]) =
-    new CommentService[F](repository)
+  def apply[F[_]: Monad](
+      repository: CommentRepositoryAlgebra[F],
+      validation: CommentValidationAlgebra[F]) =
+    new CommentService[F](repository, validation)
 }
