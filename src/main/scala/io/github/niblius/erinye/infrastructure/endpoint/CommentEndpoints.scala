@@ -9,7 +9,7 @@ import io.circe.generic.auto._
 import io.circe.syntax._
 import io.github.niblius.erinye.domain.authentication.AuthenticatedRequired
 import io.github.niblius.erinye.domain.comments._
-import io.github.niblius.erinye.domain.notifications.{CommentDeleted, NotificationService}
+import io.github.niblius.erinye.domain.notifications._
 import io.github.niblius.erinye.domain.users.{Role, User}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
@@ -39,8 +39,8 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
     TSecAuthService.withAuthorization(AuthenticatedRequired) {
       case secured @ POST -> Root / "comments" asAuthed user =>
         val req = secured.request
-        val action = for {
-          comment <- req.as[Comment]
+        val action: EitherT[F, NonEmptyList[CommentValidationError], Comment] = for {
+          comment <- EitherT.liftF(req.as[Comment])
           saved <- commentService
             .create(
               comment.copy(
@@ -48,9 +48,9 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
                 userId = user.id,
                 dateCreated = Instant.now(),
                 dateEdited = None))
-            .value
+          _ <- EitherT.liftF(notificationService.publish(CommentCreated(saved)))
         } yield saved
-        responseBuilder.buildList(action)
+        responseBuilder.buildList(action.value)
     }
 
   private def createAnonymousCommentEndpoint(
@@ -58,14 +58,14 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       notificationService: NotificationService[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case req @ POST -> Root / "comments" / "anonymous" =>
-        val action = for {
-          comment <- req.as[Comment]
+        val action: EitherT[F, NonEmptyList[CommentValidationError], Comment] = for {
+          comment <- EitherT.liftF(req.as[Comment])
           saved <- commentService
             .createAnonymous(
               comment.copy(userId = None, dateCreated = Instant.now(), dateEdited = None))
-            .value
+          _ <- EitherT.liftF(notificationService.publish(CommentCreated(saved)))
         } yield saved
-        responseBuilder.buildList(action)
+        responseBuilder.buildList(action.value)
     }
 
   private def updateCommentEndpoint(
@@ -91,6 +91,7 @@ class CommentEndpoints[F[_]: Effect] extends Http4sDsl[F] {
             else EitherT.leftT[F, Comment](NonEmptyList.one(CommentForbidden))
           }
           saved <- commentService.update(updated)
+          _ <- EitherT.liftF(notificationService.publish(CommentEdited(saved)))
         } yield saved
 
         responseBuilder.buildList(action.value)
