@@ -17,14 +17,8 @@ class UserService[F[_]: Monad](
       saved <- EitherT.right(userRepo.create(user))
     } yield saved
 
-  def createUser(user: User): EitherT[F, NonEmptyList[UserValidationError], User] = {
-    val validate = for {
-      fields <- validation.validate(user)
-      uniqueness <- validation.doesNotExist(user).toValidatedNel
-    } yield fields |+| uniqueness
-
-    createUserWithExternalValidation(user, validate)
-  }
+  def createUser(user: User): EitherT[F, NonEmptyList[UserValidationError], User] =
+    createUserWithExternalValidation(user, validation.validate(user))
 
   /**
     * We need not hashed version of a password to validate it.
@@ -37,8 +31,7 @@ class UserService[F[_]: Monad](
       password <- validation
         .validatePassword(notHashedPassword)
         .toValidatedNel
-      uniqueness <- validation.doesNotExist(user).toValidatedNel
-    } yield fields |+| password |+| uniqueness
+    } yield fields |+| password
     createUserWithExternalValidation(user, validate)
   }
 

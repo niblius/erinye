@@ -1,11 +1,9 @@
 package io.github.niblius.erinye
-package infrastructure.endpoint.user
 
 import cats.Id
 import cats.effect._
-import org.http4s._
 import org.http4s.implicits._
-import org.http4s.dsl._
+import org.http4s.dsl.Http4sDsl
 import org.http4s.client.dsl.Http4sClientDsl
 import org.scalatest._
 import org.scalatest.prop.PropertyChecks
@@ -21,6 +19,7 @@ import infrastructure.doobie.DoobieUserRepositoryInterpreter
 import infrastructure.TokenRepositoryInterpreter
 import infrastructure.endpoint._
 import User._
+import org.http4s.{AuthScheme, Credentials, EntityEncoder, Request, Response, Uri}
 
 class UserEndpointsSpec
     extends FunSuite
@@ -43,20 +42,31 @@ class UserEndpointsSpec
     val authService = AuthService[IO](userService, tokenStore, signingKey, cryptService)
     val userHttpService =
       UserEndpoints.endpoints(userService, BCrypt.syncPasswordHasher[IO], authService).orNotFound
-    implicit val usrEnc = User.userEntityEncoder[IO]
+
+    def signUp(userSignup: SignupRequest): IO[Response[IO]] =
+      for {
+        request <- POST(userSignup, Uri.uri("/users"))
+        response <- userHttpService.run(request)
+      } response
+
+    def signInAndLogIn(userSignup: SignupRequest): IO[(Response[IO], Response[IO])] =
+      for {
+        createResponse <- signUp(userSignup)
+        loginRequest <- POST(
+          LoginRequest(userSignup.userName, userSignup.password),
+          Uri.unsafeFromString("/login"))
+        loginResponse <- userHttpService.run(loginRequest)
+      } yield (createResponse, loginResponse)
   }
 
-  test("create user") {
+  test("sign up user") {
     val d = new Deps
     import d._
 
     forAll { userSignup: SignupRequest =>
-      (for {
-        request <- POST(userSignup, Uri.uri("/users"))
-        response <- userHttpService.run(request)
-      } yield {
-        response.status shouldEqual Ok
-      }).unsafeRunSync
+      signUp(userSignup)
+        .map(response => response.status shouldEqual Ok)
+        .unsafeRunSync
     }
   }
 
@@ -64,27 +74,30 @@ class UserEndpointsSpec
     val d = new Deps
     import d._
 
-    forAll { (userSignup: SignupRequest, newEmail: NonEmptyString) =>
+    forAll { (userSignup: SignupRequest, userUpdateRequest: UserUpdateRequest) =>
       (for {
-        createRequest <- POST(userSignup, Uri.uri("/users"))
-        createResponse <- userHttpService.run(createRequest)
+        (createResponse, loginResponse) <- signInAndLogIn(userSignup)
         createdUser <- createResponse.as[User]
-        loginRequest <- POST(
-          LoginRequest(userSignup.userName, userSignup.password),
-          Uri.unsafeFromString("/login"))
-        loginResponse <- userHttpService.run(loginRequest)
         tokenData <- loginResponse.as[Token]
-        userToUpdate = createdUser.copy(email = newEmail.str)
         updateUser = Request(
           method = PUT,
           uri = Uri.unsafeFromString(s"/users/${createdUser.userName}"))
-          .withEntity(userToUpdate)
+          .withEntity(userUpdateRequest)
           .withHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, tokenData.encoded)))
         updateResponse <- userHttpService.run(updateUser)
         updatedUser <- updateResponse.as[User]
+        reLoginRequest <- POST(
+          LoginRequest(userUpdateRequest.name.get, userUpdateRequest.password.get),
+          Uri.unsafeFromString("/login"))
+        reLoginResponse <- userHttpService.run(reLoginRequest)
       } yield {
+        createResponse.status shouldEqual Ok
+        loginResponse.status shouldEqual Ok
         updateResponse.status shouldEqual Ok
-        updatedUser.email shouldEqual newEmail.str
+        reLoginResponse.status shouldEqual Ok
+
+        updatedUser.email shouldEqual userUpdateRequest.email
+        updatedUser.userName shouldEqual userUpdateRequest.name
         createdUser.id shouldEqual updatedUser.id
       }).unsafeRunSync
     }
@@ -96,8 +109,7 @@ class UserEndpointsSpec
 
     forAll { userSignup: SignupRequest =>
       (for {
-        createRequest <- POST(userSignup, Uri.uri("/users"))
-        createResponse <- userHttpService.run(createRequest)
+        createResponse <- signUp(userSignup)
         createdUser <- createResponse.as[User]
         getRequest <- GET(Uri.unsafeFromString(s"/users/${createdUser.userName}"))
         getResponse <- userHttpService.run(getRequest)

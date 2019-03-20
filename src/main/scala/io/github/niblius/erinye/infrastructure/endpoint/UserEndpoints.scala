@@ -1,7 +1,8 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
+import cats.Applicative
 import cats.data.{EitherT, NonEmptyList}
-import cats.effect.Effect
+import cats.effect.{Effect, Sync}
 import cats.implicits._
 import io.circe.generic.auto._
 import org.http4s.{EntityDecoder, EntityEncoder}
@@ -19,6 +20,11 @@ import io.github.niblius.erinye.domain.users._
 import scala.language.higherKinds
 
 final case class LoginRequest(userName: String, password: String)
+object LoginRequest {
+  implicit def loginRequestEnc[F[_]: Applicative]: EntityEncoder[F, LoginRequest] =
+    jsonEncoderOf
+  implicit def loginReqDec[F[_]: Sync]: EntityDecoder[F, LoginRequest] = jsonOf
+}
 
 final case class SignupRequest(userName: String, email: String, password: String) {
   def asUser[A](hashedPassword: PasswordHash[A]): User = User(
@@ -27,6 +33,10 @@ final case class SignupRequest(userName: String, email: String, password: String
     Some(hashedPassword.toString)
   )
 }
+object SignupRequest {
+  implicit def signupRequestEnc[F[_]: Applicative]: EntityEncoder[F, SignupRequest] = jsonEncoderOf
+  implicit def signupReqDec[F[_]: Sync]: EntityDecoder[F, SignupRequest] = jsonOf
+}
 
 final case class UserUpdateRequest(
     name: Option[String],
@@ -34,15 +44,13 @@ final case class UserUpdateRequest(
     password: Option[String],
     role: Option[String]
 )
+object UserUpdateRequest {
+  implicit def userUpdateRequestEnc[F[_]: Applicative]: EntityEncoder[F, UserUpdateRequest] =
+    jsonEncoderOf
+  implicit def userUpdateRequestDec[F[_]: Sync]: EntityDecoder[F, UserUpdateRequest] = jsonOf
+}
 
 class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
-  implicit val loginRequestEnc: EntityEncoder[F, LoginRequest] = jsonEncoderOf
-  implicit val loginReqDec: EntityDecoder[F, LoginRequest] = jsonOf
-  implicit val signupRequestEnc: EntityEncoder[F, SignupRequest] = jsonEncoderOf
-  implicit val signupReqDec: EntityDecoder[F, SignupRequest] = jsonOf
-  implicit val userUpdateRequestEnc: EntityEncoder[F, UserUpdateRequest] = jsonEncoderOf
-  implicit val userUpdateRequestDec: EntityDecoder[F, UserUpdateRequest] = jsonOf
-
   private val responseBuilder = ResponseBuilder[F, UserValidationError](
     {
       case UserNotFoundError => NotFound(_)
@@ -94,21 +102,19 @@ class UserEndpoints[F[_]: Effect] extends Http4sDsl[F] {
       .orElse(orig.hash.map(_.pure[F]))
       .get
 
-    val modified: F[Either[UserValidationError, User]] =
-      if (identity.role == Role.Administrator)
-        for {
-          hash <- newHash
-          email = req.email.getOrElse(orig.email)
-          name = req.name.getOrElse(orig.userName)
-          role = req.role.map(Role(_)).getOrElse(orig.role)
-        } yield Either.right(User(name, email, Some(hash), role, orig.id))
-      else if (identity.id == orig.id)
-        for {
-          hash <- newHash
-          email = req.email.getOrElse(orig.email)
-        } yield Either.right(orig.copy(email = email, hash = Some(hash)))
-      else
-        Either.left[UserValidationError, User](UserForbiddenError).pure[F]
+    val email = req.email.getOrElse(orig.email)
+    val name = req.name.getOrElse(orig.userName)
+    val role = req.role.map(Role(_)).getOrElse(orig.role)
+    val modified: F[Either[UserValidationError, User]] = for {
+      hash <- newHash
+      user = {
+        if (identity.role == Role.Administrator)
+          Either.right(User(name, email, Some(hash), role, orig.id))
+        else if (identity.id == orig.id)
+          Either.right(orig.copy(userName = name, email = email, hash = Some(hash)))
+        else Either.left[UserValidationError, User](UserForbiddenError)
+      }
+    } yield user
 
     EitherT(modified)
   }

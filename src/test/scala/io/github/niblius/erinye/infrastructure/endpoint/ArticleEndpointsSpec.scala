@@ -1,5 +1,6 @@
 package io.github.niblius.erinye.infrastructure.endpoint
 
+/*
 import io.github.niblius.erinye.infrastructure.ErinyeArbitraries
 import io.github.niblius.erinye.domain.articles._
 import io.github.niblius.erinye.infrastructure.doobie.DoobieArticleRepositoryInterpreter
@@ -59,3 +60,4 @@ class ArticleEndpointsSpec
   }
 
 }
+ */

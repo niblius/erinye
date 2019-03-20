@@ -9,7 +9,9 @@ class UserValidationInterpreter[F[_]: Monad](userRepo: UserRepositoryAlgebra[F])
   def doesNotExist(user: User) = EitherT {
     userRepo.findByUserName(user.userName).map {
       case None => Right(())
-      case Some(_) => Left(UserAlreadyExistsError)
+      case Some(otherUser) =>
+        if (otherUser.id == user.id) Right(())
+        else Left(UserAlreadyExistsError)
     }
   }
 
@@ -45,8 +47,9 @@ class UserValidationInterpreter[F[_]: Monad](userRepo: UserRepositoryAlgebra[F])
   def validate(user: User): F[ValidatedNel[UserValidationError, Unit]] =
     (
       validateEmail(user.email).leftWiden[UserValidationError].toValidatedNel,
-      validateName(user.userName).leftWiden[UserValidationError].toValidatedNel
-    ).mapN(_ |+| _)
+      validateName(user.userName).leftWiden[UserValidationError].toValidatedNel,
+      doesNotExist(user).leftWiden[UserValidationError].toValidatedNel
+    ).mapN(_ |+| _ |+| _)
 
 }
 
